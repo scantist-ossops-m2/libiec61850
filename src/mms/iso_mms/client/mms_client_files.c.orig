@@ -71,6 +71,7 @@ getFrsm(MmsConnection connection, int32_t frsmId)
     return frsm;
 }
 
+
 static int32_t
 getNextFrsmId(MmsConnection connection)
 {
@@ -121,48 +122,38 @@ mmsClient_handleFileOpenRequest(
 
     if (hasFileName) {
 
-        if (mmsMsg_isFilenameSave(filename) == false) {
-            /* potential attack */
+        MmsFileReadStateMachine* frsm = getFreeFrsm(connection);
 
-            if (DEBUG_MMS_CLIENT)
-                printf("MMS_CLIENT: client provided unsave filename -> rejected\n");
+        if (frsm != NULL) {
 
-             mmsMsg_createServiceErrorPdu(invokeId, response, MMS_ERROR_FILE_FILE_NON_EXISTENT);
-        }
-        else {
-            MmsFileReadStateMachine* frsm = getFreeFrsm(connection);
+            MmsOutstandingCall obtainFileCall = mmsClient_getMatchingObtainFileRequest(connection, filename);
 
-            if (frsm != NULL) {
+            if (obtainFileCall) {
 
-                MmsOutstandingCall obtainFileCall = mmsClient_getMatchingObtainFileRequest(connection, filename);
+                if (DEBUG_MMS_CLIENT)
+                    printf("MMS_CLIENT: file open is matching obtain file request for file %s\n", filename);
 
-                if (obtainFileCall) {
+                obtainFileCall->timeout = Hal_getTimeInMs() + connection->requestTimeout;
+            }
 
-                    if (DEBUG_MMS_CLIENT)
-                        printf("MMS_CLIENT: file open is matching obtain file request for file %s\n", filename);
+            FileHandle fileHandle = mmsMsg_openFile(MmsConnection_getFilestoreBasepath(connection), filename, false);
 
-                    obtainFileCall->timeout = Hal_getTimeInMs() + connection->requestTimeout;
-                }
+            if (fileHandle != NULL) {
 
-                FileHandle fileHandle = mmsMsg_openFile(MmsConnection_getFilestoreBasepath(connection), filename, false);
+                frsm->fileHandle = fileHandle;
+                frsm->readPosition = filePosition;
+                frsm->frsmId = getNextFrsmId(connection);
+                frsm->obtainRequest = obtainFileCall;
 
-                if (fileHandle != NULL) {
-
-                    frsm->fileHandle = fileHandle;
-                    frsm->readPosition = filePosition;
-                    frsm->frsmId = getNextFrsmId(connection);
-                    frsm->obtainRequest = obtainFileCall;
-
-                    mmsMsg_createFileOpenResponse(MmsConnection_getFilestoreBasepath(connection),
-                            invokeId, response, filename, frsm);
-                }
-                else
-                    mmsMsg_createServiceErrorPdu(invokeId, response, MMS_ERROR_FILE_FILE_NON_EXISTENT);
-
+                mmsMsg_createFileOpenResponse(MmsConnection_getFilestoreBasepath(connection),
+                        invokeId, response, filename, frsm);
             }
             else
-                mmsMsg_createServiceErrorPdu(invokeId, response, MMS_ERROR_RESOURCE_OTHER);
+                mmsMsg_createServiceErrorPdu(invokeId, response, MMS_ERROR_FILE_FILE_NON_EXISTENT);
+
         }
+        else
+            mmsMsg_createServiceErrorPdu(invokeId, response, MMS_ERROR_RESOURCE_OTHER);
     }
     else
         goto exit_invalid_parameter;
